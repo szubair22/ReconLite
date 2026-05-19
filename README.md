@@ -4,10 +4,7 @@ ReconLite is a browser-only reconciliation tool for accountants. Drop in a gener
 
 ## Try it
 
-Once deployed, you can use ReconLite at either URL. Both serve the same build.
-
-- GitHub Pages: https://szubair22.github.io/ReconLite/
-- Self-hosted: https://recon.segunzubair.com
+Hosted on GitHub Pages: https://szubair22.github.io/ReconLite/
 
 Allow a few minutes after a push for the GitHub Pages deploy to propagate.
 
@@ -32,7 +29,7 @@ European comma-decimal notation (for example `1.250,00`) is NOT yet supported. I
 
 ## Sample data
 
-Two small CSVs ship in `public/sample-data/`. The "Try with sample data" button in the app fetches them with relative URLs so they work on both the GitHub Pages URL and the self-hosted URL.
+Two small CSVs ship in `public/sample-data/`. The "Try with sample data" button in the app fetches them with relative URLs so they work from the GitHub Pages URL.
 
 ## Local development
 
@@ -48,19 +45,7 @@ npm run build
 npm run preview
 ```
 
-The build emits a static `dist/` folder. Because `vite.config.ts` sets `base: './'`, the same `dist/` works on the GitHub Pages project URL and on a custom self-hosted domain. Do not change the base back to `/` or relative asset URLs will break.
-
-## Self-hosting (Docker)
-
-A multi-stage Dockerfile builds the static site and serves it from `nginx:1.27-alpine`. The image is published to GitHub Container Registry by `.github/workflows/build-image.yml` on every push to `main`, tagged by commit SHA (no `:latest`).
-
-Pull and run:
-
-```bash
-docker run --rm -p 8080:80 ghcr.io/szubair22/reconlite:sha-<commit>
-```
-
-The Ansible playbook in [`szubair22/fossys-infrastructure`](https://github.com/szubair22/fossys-infrastructure) rolls the image to the metal1 host that serves `recon.segunzubair.com`.
+The build emits a static `dist/` folder. `vite.config.ts` sets `base: './'` so all bundled asset URLs resolve correctly under the GitHub Pages project URL.
 
 ## License
 

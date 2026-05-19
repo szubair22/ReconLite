@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite';
 
-// Relative base lets the same dist/ serve from both:
-//   - https://szubair22.github.io/ReconLite/  (GitHub Pages project URL)
-//   - https://recon.segunzubair.com/          (self-hosted nginx on metal1)
-// All asset URLs become relative to index.html. Do not change to '/'.
+// Relative base so the bundled assets resolve correctly under the GitHub
+// Pages project URL (https://szubair22.github.io/ReconLite/). All asset
+// URLs become relative to index.html. Do not change to '/' or the assets
+// will 404 on the project page.
 export default defineConfig({
   base: './',
   build: {
