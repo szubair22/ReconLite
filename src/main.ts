@@ -345,6 +345,10 @@ async function loadSampleData(): Promise<void> {
     setSelectedFile('gl', glFile);
     setSelectedFile('subledger', subFile);
     await loadFiles();
+    // The sample CSV headers match the guessColumn heuristics, so the four
+    // mapping selects auto-populate. Running the summary here completes the
+    // end-to-end demo without a second click.
+    await runBalanceSummary();
   } catch (error) {
     console.error(error);
     showToast(error instanceof Error ? error.message : 'Unable to load sample data.');
