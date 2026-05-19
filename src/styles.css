@@ -253,6 +253,50 @@ select {
   background: white;
 }
 
+.tolerance-row {
+  display: grid;
+  grid-template-columns: max-content minmax(120px, 200px);
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 0;
+  font-weight: 700;
+}
+
+.tolerance-row input {
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: white;
+}
+
+.verdict {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #ecfdf5;
+  color: #064e3b;
+  border: 1px solid #a7f3d0;
+  font-weight: 700;
+}
+
+.verdict:empty {
+  display: none;
+}
+
+.warning-banner {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fef3c7;
+  color: #78350f;
+  border: 1px solid #fcd34d;
+  font-weight: 700;
+}
+
+tr[data-status="out"] {
+  background: #fef2f2;
+}
+
 .hidden {
   display: none !important;
 }

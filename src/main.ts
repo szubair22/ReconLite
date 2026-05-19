@@ -1,6 +1,6 @@
 import './styles.css';
 import { ReconDuckDb } from './duckdbClient';
-import type { MappingState, SourceKind, TableProfile } from './types';
+import type { CompareRow, MappingState, SourceKind, TableProfile } from './types';
 
 const db = new ReconDuckDb();
 
@@ -9,6 +9,7 @@ const state: {
   subledgerFile?: File;
   glProfile?: TableProfile;
   subledgerProfile?: TableProfile;
+  lastCompare?: CompareRow[];
 } = {};
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -56,6 +57,7 @@ app.innerHTML = `
 
       <div class="button-row">
         <button id="loadBtn" type="button" disabled>Load files into DuckDB</button>
+        <button id="sampleBtn" type="button" class="ghost">Try with sample data</button>
         <span id="status" class="status">Choose both files to begin.</span>
       </div>
     </section>
@@ -90,6 +92,11 @@ app.innerHTML = `
         </div>
       </div>
 
+      <label class="tolerance-row">
+        <span>Match tolerance (USD)</span>
+        <input id="toleranceInput" type="number" step="0.01" min="0" value="0.01" />
+      </label>
+
       <div class="button-row">
         <button id="runSummaryBtn" type="button">Run balance summary</button>
         <span class="status" id="mappingStatus">Waiting for field selections.</span>
@@ -104,7 +111,12 @@ app.innerHTML = `
       <div id="balanceResults" class="table-wrap"></div>
 
       <h3>GL vs subledger comparison</h3>
+      <div id="unparsedWarning" class="warning-banner hidden"></div>
+      <div id="reconVerdict" class="verdict"></div>
       <div id="compareResults" class="table-wrap"></div>
+      <div class="button-row">
+        <button id="downloadCompareBtn" type="button" class="ghost">Download comparison as CSV</button>
+      </div>
     </section>
   </main>
 
@@ -119,6 +131,7 @@ const els = {
   glFileName: document.querySelector<HTMLSpanElement>('#glFileName')!,
   subledgerFileName: document.querySelector<HTMLSpanElement>('#subledgerFileName')!,
   loadBtn: document.querySelector<HTMLButtonElement>('#loadBtn')!,
+  sampleBtn: document.querySelector<HTMLButtonElement>('#sampleBtn')!,
   resetBtn: document.querySelector<HTMLButtonElement>('#resetBtn')!,
   status: document.querySelector<HTMLSpanElement>('#status')!,
   previewSection: document.querySelector<HTMLElement>('#previewSection')!,
@@ -130,10 +143,14 @@ const els = {
   glAmountColumn: document.querySelector<HTMLSelectElement>('#glAmountColumn')!,
   subledgerAccountColumn: document.querySelector<HTMLSelectElement>('#subledgerAccountColumn')!,
   subledgerAmountColumn: document.querySelector<HTMLSelectElement>('#subledgerAmountColumn')!,
+  toleranceInput: document.querySelector<HTMLInputElement>('#toleranceInput')!,
   runSummaryBtn: document.querySelector<HTMLButtonElement>('#runSummaryBtn')!,
   mappingStatus: document.querySelector<HTMLSpanElement>('#mappingStatus')!,
   balanceResults: document.querySelector<HTMLDivElement>('#balanceResults')!,
   compareResults: document.querySelector<HTMLDivElement>('#compareResults')!,
+  reconVerdict: document.querySelector<HTMLDivElement>('#reconVerdict')!,
+  unparsedWarning: document.querySelector<HTMLDivElement>('#unparsedWarning')!,
+  downloadCompareBtn: document.querySelector<HTMLButtonElement>('#downloadCompareBtn')!,
   toast: document.querySelector<HTMLDivElement>('#toast')!
 };
 
@@ -142,8 +159,10 @@ setupDropZone(els.subledgerDropZone, els.subledgerFile, 'subledger');
 setupTabs();
 
 els.loadBtn.addEventListener('click', loadFiles);
+els.sampleBtn.addEventListener('click', loadSampleData);
 els.runSummaryBtn.addEventListener('click', runBalanceSummary);
 els.resetBtn.addEventListener('click', resetApp);
+els.downloadCompareBtn.addEventListener('click', downloadCompareCsv);
 
 function setupDropZone(zone: HTMLLabelElement, input: HTMLInputElement, source: SourceKind): void {
   ['dragenter', 'dragover'].forEach((eventName) => {
@@ -242,15 +261,23 @@ async function runBalanceSummary(): Promise<void> {
     return;
   }
 
+  const toleranceRaw = Number.parseFloat(els.toleranceInput.value);
+  const tolerance = Number.isFinite(toleranceRaw) && toleranceRaw >= 0 ? toleranceRaw : 0.01;
+
   try {
     setBusy(els.runSummaryBtn, true, 'Running...');
     els.mappingStatus.textContent = 'Running SQL balance summaries in the browser...';
 
     const balances = await db.buildBalanceSummary(mapping);
-    const compare = await db.buildBalanceCompare();
+    const compare = await db.buildBalanceCompare(tolerance);
+
+    state.lastCompare = compare;
 
     els.balanceResults.innerHTML = buildTable(balances);
     els.compareResults.innerHTML = buildTable(compare);
+    markOutOfBalanceRows(els.compareResults);
+    renderVerdict(compare, tolerance);
+    renderUnparsedWarning(compare);
     reveal(els.resultsSection);
     els.mappingStatus.textContent = 'Balance summary complete.';
     showToast('Balance summary complete.');
@@ -261,6 +288,116 @@ async function runBalanceSummary(): Promise<void> {
   } finally {
     setBusy(els.runSummaryBtn, false, 'Run balance summary');
   }
+}
+
+function markOutOfBalanceRows(container: HTMLElement): void {
+  const rows = container.querySelectorAll<HTMLTableRowElement>('tbody tr');
+  rows.forEach((row) => {
+    const cells = row.querySelectorAll<HTMLTableCellElement>('td');
+    for (const cell of cells) {
+      if (cell.textContent?.trim() === 'Out of balance') {
+        row.dataset.status = 'out';
+        return;
+      }
+    }
+  });
+}
+
+function renderVerdict(rows: CompareRow[], tolerance: number): void {
+  if (!rows.length) {
+    els.reconVerdict.innerHTML = '';
+    return;
+  }
+  const matched = rows.filter((r) => r.status === 'Matched').length;
+  const total = rows.length;
+  const variance = rows.reduce((acc, r) => acc + Math.abs(Number(r.difference) || 0), 0);
+  const tolFmt = tolerance.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+  const varFmt = variance.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+  els.reconVerdict.textContent =
+    `${matched} of ${total} accounts matched within ${tolFmt}. Total absolute variance: ${varFmt}.`;
+}
+
+function renderUnparsedWarning(rows: CompareRow[]): void {
+  const total = rows.reduce((acc, r) => acc + (Number(r.unparsed_rows) || 0), 0);
+  if (total <= 0) {
+    els.unparsedWarning.classList.add('hidden');
+    els.unparsedWarning.textContent = '';
+    return;
+  }
+  els.unparsedWarning.classList.remove('hidden');
+  els.unparsedWarning.textContent =
+    `WARNING: ${total} row${total === 1 ? '' : 's'} could not be parsed as amounts and ${total === 1 ? 'was' : 'were'} excluded. Check your amount column or source file.`;
+}
+
+async function loadSampleData(): Promise<void> {
+  try {
+    setBusy(els.sampleBtn, true, 'Loading sample...');
+    const [glResp, subResp] = await Promise.all([
+      fetch('./sample-data/gl_sample.csv'),
+      fetch('./sample-data/subledger_sample.csv')
+    ]);
+    if (!glResp.ok || !subResp.ok) {
+      throw new Error('Sample CSV files were not found. Did you run the build with sample-data in public/?');
+    }
+    const [glBlob, subBlob] = await Promise.all([glResp.blob(), subResp.blob()]);
+    const glFile = new File([glBlob], 'gl_sample.csv', { type: 'text/csv' });
+    const subFile = new File([subBlob], 'subledger_sample.csv', { type: 'text/csv' });
+    setSelectedFile('gl', glFile);
+    setSelectedFile('subledger', subFile);
+    await loadFiles();
+  } catch (error) {
+    console.error(error);
+    showToast(error instanceof Error ? error.message : 'Unable to load sample data.');
+  } finally {
+    setBusy(els.sampleBtn, false, 'Try with sample data');
+  }
+}
+
+function downloadCompareCsv(): void {
+  const rows = state.lastCompare;
+  if (!rows || !rows.length) {
+    showToast('Run a balance summary first.');
+    return;
+  }
+  const headers = Object.keys(rows[0]);
+  const lines: string[] = [];
+  lines.push(headers.map((h) => csvCell(h)).join(','));
+  for (const row of rows) {
+    lines.push(headers.map((h) => csvCell((row as Record<string, unknown>)[h])).join(','));
+  }
+  const csv = lines.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const today = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `reconlite-comparison-${today}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// RFC 4180 quoting with a formula-injection guard. Excel/Sheets evaluate any
+// cell starting with =, +, -, @, tab, or CR as a formula; prefix a single
+// quote so the spreadsheet treats it as text.
+function csvCell(value: unknown): string {
+  let s: string;
+  if (value === null || value === undefined) {
+    s = '';
+  } else if (typeof value === 'number') {
+    s = Number.isFinite(value) ? String(value) : '';
+  } else {
+    s = String(value);
+  }
+  const first = s.charAt(0);
+  if (first === '=' || first === '+' || first === '-' || first === '@' || first === '\t' || first === '\r') {
+    s = `'${s}`;
+  }
+  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+    s = `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
 }
 
 function buildFieldSelects(gl: TableProfile, subledger: TableProfile): void {
@@ -365,6 +502,7 @@ async function resetApp(): Promise<void> {
   state.subledgerFile = undefined;
   state.glProfile = undefined;
   state.subledgerProfile = undefined;
+  state.lastCompare = undefined;
 
   els.glFile.value = '';
   els.subledgerFile.value = '';
@@ -377,7 +515,12 @@ async function resetApp(): Promise<void> {
   els.previewSection.classList.add('hidden');
   els.mappingSection.classList.add('hidden');
   els.resultsSection.classList.add('hidden');
+  els.glPreview.innerHTML = '';
+  els.subledgerPreview.innerHTML = '';
   els.balanceResults.innerHTML = '';
   els.compareResults.innerHTML = '';
+  els.reconVerdict.textContent = '';
+  els.unparsedWarning.classList.add('hidden');
+  els.unparsedWarning.textContent = '';
   showToast('Session cleared.');
 }
