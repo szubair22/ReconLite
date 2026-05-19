@@ -4,8 +4,8 @@ import mvpWorker from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url
 import duckdbWasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url';
 import ehWorker from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
 import type { AsyncDuckDB, AsyncDuckDBConnection } from '@duckdb/duckdb-wasm';
-import type { BalanceRow, SourceKind, TableProfile } from './types';
-import { accountExpression, amountExpression, quoteLiteral } from './sql';
+import type { BalanceRow, CompareRow, SourceKind, TableProfile } from './types';
+import { accountExpression, amountExpression, quoteLiteral, unparsedAmountFlag } from './sql';
 
 const TABLE_NAMES: Record<SourceKind, string> = {
   gl: 'gl_raw',
@@ -104,7 +104,8 @@ export class ReconDuckDb {
         'GL' as source,
         ${accountExpression(args.glAccountColumn)} as account,
         round(sum(coalesce(${amountExpression(args.glAmountColumn)}, 0)), 2) as balance,
-        count(*)::integer as row_count
+        count(*)::integer as row_count,
+        sum(${unparsedAmountFlag(args.glAmountColumn)})::integer as unparsed_rows
       from gl_raw
       group by 1, 2
     `);
@@ -115,7 +116,8 @@ export class ReconDuckDb {
         'Subledger' as source,
         ${accountExpression(args.subledgerAccountColumn)} as account,
         round(sum(coalesce(${amountExpression(args.subledgerAmountColumn)}, 0)), 2) as balance,
-        count(*)::integer as row_count
+        count(*)::integer as row_count,
+        sum(${unparsedAmountFlag(args.subledgerAmountColumn)})::integer as unparsed_rows
       from subledger_raw
       group by 1, 2
     `);
@@ -130,8 +132,12 @@ export class ReconDuckDb {
     return toObjects(result) as BalanceRow[];
   }
 
-  async buildBalanceCompare(): Promise<Record<string, unknown>[]> {
+  async buildBalanceCompare(tolerance: number = 0.01): Promise<CompareRow[]> {
     if (!this.conn) throw new Error('DuckDB is not initialized.');
+
+    // DuckDB-WASM JS bindings don't expose named params uniformly across
+    // versions; inline a sanitized double literal instead.
+    const tolLit = `cast(${Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01} as double)`;
 
     const result = await this.conn.query(`
       select
@@ -140,13 +146,18 @@ export class ReconDuckDb {
         coalesce(sub.balance, 0) as subledger_balance,
         round(coalesce(gl.balance, 0) - coalesce(sub.balance, 0), 2) as difference,
         coalesce(gl.row_count, 0) as gl_rows,
-        coalesce(sub.row_count, 0) as subledger_rows
+        coalesce(sub.row_count, 0) as subledger_rows,
+        case
+          when abs(coalesce(gl.balance, 0) - coalesce(sub.balance, 0)) <= ${tolLit} then 'Matched'
+          else 'Out of balance'
+        end as status,
+        coalesce(gl.unparsed_rows, 0) + coalesce(sub.unparsed_rows, 0) as unparsed_rows
       from gl_balances gl
       full outer join subledger_balances sub using (account)
       order by abs(round(coalesce(gl.balance, 0) - coalesce(sub.balance, 0), 2)) desc, account
     `);
 
-    return toObjects(result);
+    return toObjects(result) as CompareRow[];
   }
 }
 

@@ -20,4 +20,16 @@ export type BalanceRow = {
   account: string;
   balance: number;
   row_count: number;
+  unparsed_rows: number;
+};
+
+export type CompareRow = {
+  account: string;
+  gl_balance: number;
+  subledger_balance: number;
+  difference: number;
+  gl_rows: number;
+  subledger_rows: number;
+  status: string;
+  unparsed_rows: number;
 };
