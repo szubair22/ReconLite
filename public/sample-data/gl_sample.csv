@@ -1,0 +1,6 @@
+Account,Date,Reference,Description,Amount
+1200,2026-04-01,INV-1001,AR invoice posting,1250.00
+1200,2026-04-02,INV-1002,AR invoice posting,300.00
+1200,2026-04-04,INV-1003,AR invoice posting,725.55
+2000,2026-04-06,BILL-774,AP bill posting,-440.25
+2000,2026-04-08,BILL-775,AP bill posting,-120.00
